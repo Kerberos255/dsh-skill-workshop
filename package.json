@@ -1,0 +1,64 @@
+{
+  "name": "dsh-skill-workshop",
+  "version": "0.1.3",
+  "type": "module",
+  "license": "MIT",
+  "description": "从日常工作自动提炼、发布和更新技能，按使用情况整理受管技能；也支持手工编辑与导入。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./config": "./config.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "*.js",
+    "!client-panel.inc.js",
+    "plugin-settings/",
+    "locale/",
+    "cordis.patch.yml",
+    "config.example.json",
+    "README.md",
+    "config.js",
+    "client.js"
+  ],
+  "dependencies": {
+    "yaml": "2.9.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-session-query": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-token-meter": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-skill": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/dsh-scope": "0.2.0-rc.2 || 0.2.1-alpha.1",
+    "@deepseek-ai/cordis": "4.0.4 || 4.0.5-alpha.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test tests/zip.test.mjs"
+  }
+}
