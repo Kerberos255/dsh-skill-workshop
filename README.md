@@ -1,25 +1,53 @@
-# 技能工坊
+# Skill Workshop for DeepSeek Harness
 
-在 DSH 原生技能 Registry 中查看技能，创建或编辑 `SKILL.md`，保留 references、scripts 和二进制资源。支持目录、单个 Markdown、UTF-8 ZIP 和 `.skill.json` 技能包导入；导入不会运行资源中的脚本。
+[简体中文](README.zh-CN.md) · [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) · [Security](SECURITY.md)
 
-设置入口：设置 → 插件 → 技能工坊。配置在 DSH 数据目录旁的 `plugins/dsh-skill-workshop/config.json`，普通设置保存后自动应用。凭证、模型和工具由官方 Host 提供。
+A native DSH **skill authoring and self-learning workshop**. Import, edit, and manage `SKILL.md`-based skills, or let completed tasks produce candidate procedures that can be promoted automatically after evidence checks.
 
-默认写入当前项目 `.dsh/skills`，可选用户技能目录 `DSH_HOME/skills`。使用官方发现顺序与调用开关。其他插件提供的技能可查看、复制；编辑、重命名、停用、删除均先生成差异提案，确认后发布。外部修改会阻止旧提案覆盖。
+## Features
 
-自动学习与自动发布默认开启，**无需人工审批**。只有同一个技能积累至少两个不同的、已完成任务轮次，且每次有成对的用户需求与助手结果出处，才允许自动发布；同一原生事件重复学习不会增加证据。技能候选在设置页展示数量与容量，首次只保留待验证候选，出现独立新证据后自动晋升，模型不能绕过这一确定性门槛。任务成功完成、原生 Agent 空闲且本轮至少有 8 个事件时，调用官方所选模型，从同一工作区、经主人身份核验的原始用户消息与公开结果提炼可复用技能，不要求来源 Agent 预设相同。短任务、失败或被取消的轮次跳过；每个工作区默认间隔 60 分钟、24 小时最多 8 次整理。新输入、原生 Stop、配置变化及卸载会取消学习。
+- Browse, create, update, and import native DSH skills from Markdown, directories, and supported skill archives.
+- Learn reusable workflows from completed tasks without granting a model direct write access to the published skill root.
+- **Unattended auto-promotion by default:** the same skill needs evidence from at least **two distinct successful task turns**, each linked to genuine user requests and assistant results.
+- Guard against uncontrolled growth: bounded candidates and managed skills, stale-candidate expiry, history pruning, and retirement of unused workshop-owned skills.
+- Protect manual edits and externally managed skills from automated overwrite; recover interrupted publications using durable records and hash checks.
 
-工坊校验自动学习来源和完整技能包后发布到原生技能根；更新仅覆盖本工坊自动发布且内容未被人工修改的技能。手写、导入、其他插件技能和外部修改保留审阅流程。模型只有提案能力，发布由服务核对来源、路径、版本与当前设置后完成。
+## Install
 
-**防无限增长：** 每工作区最多 32 个待验证自动候选、64 个受管技能（可配置）；候选 45 天没有新证据则自动失效，自动学习提案及自动学习运行记录的已处理历史最多保留 180 天，新配置的通用已处理提案最多保留 500 条。受管技能数量达到上限后只允许更新现有受管技能，不再自动创建更多新技能；人工与外部技能不会被清理或覆盖。已安装的旧配置若显式将通用历史限制设为 0，该设置仍保留，但自动学习已处理记录仍按 180 天回收。
+Requires native DSH skill and session services; runtime and peer requirements are listed in [package.json](package.json).
 
-受管技能的调用记录来自原生 `skill` 工具成功结果及用户明确技能调用，查看目录或编辑不算使用。默认 90 天未使用时退役，继续保留 7 天后清理；使用期间刷新时间。设置“未使用退役天数”为 0 可关闭淘汰。整理仅操作有工坊所有权记录且文件校验仍匹配的技能，人工维护的内容保留。启动及每 6 小时执行一次轻量清理核对，核对本身不调用模型。
+```sh
+dsh plugin --profile desktop add github:Kerberos255/dsh-skill-workshop
+```
 
-“从最近会话学习”也可手动触发。自动发布关闭时，新学习结果保留为待审提案；开启时在证据达标后自行发布，无需逐项确认。既有导入提案仍可在设置页查看差异并确认发布。
+Replace the profile name as needed, pin a commit if desired, and restart DSH after installing or upgrading code.
 
-提案及学习记录保存在 `DSH_HOME/skill-workshop/state.sqlite`。插件卸载会取消任务、释放配置 watcher、工具与数据库，保留配置和待审提案。首次安装或升级包代码需要完整退出、重新打开客户端。
+## Quick start
 
-发布前持久保存提交意图与文件校验值，并锁定受影响的技能路径。进程突然退出后，完整发布会核对为已发布；发布未完成时恢复原技能并保留待审提案。外部修改、链接或目录范围变化会暂停恢复，保留现有文件及恢复目录；设置页显示原因并提供“重新核对恢复”。运行中的另一个发布进程不会被恢复程序接管。已核对完成的临时文件与意图记录自动清除，发布历史仍在提案记录中。
+1. Open **Settings → Plugins → Skill Workshop**. Choose the project skill root (`.dsh/skills`) or user skill root (`DSH_HOME/skills`).
+2. Run regular DSH tasks. Eligible successful turns may generate **skill candidates**; short, failed and interrupted tasks are skipped.
+3. Once a candidate has independent evidence from two distinct turns and passes checks, the workshop **publishes it without asking for per-skill manual confirmation**.
+4. Inspect candidate/managed counts and customize limits, or use the editor/import screen for manual skills. Manual import and external edits retain their review flow.
 
-历史记录默认保留。可在设置页限制已发布/已拒绝提案的保留天数和数量；待审及恢复中的提案始终保留，技能文件不受这些限制影响。突然退出测试覆盖文件交换、SQLite 提交和恢复目录清理；实际断电及文件系统持久性仍需独立演练。
+## Growth-control defaults
 
-本插件为本地项目独立实现，参考本机 OpenClaw 的自主学习及发布策略与 DSH 原生 Registry、filesystem 和 Agent maintenance 契约。闲置保留策略为本插件的可配置选择。兼容官方桌面 `0.2.0-rc.2`、开发 SDK `0.2.1-alpha.1`；使用 Node 内置 SQLite 和有界 ZIP 读取，不新增服务进程。
+| Bound | Default |
+| --- | --- |
+| Pending auto-learned candidates per workspace | **32** |
+| Workshop-managed skills per workspace | **64** |
+| Candidate expiry without fresh evidence | **45 days** |
+| Automatic learning cooldown / daily attempts | **60 minutes / 8** |
+| Managed skill retirement / grace | **90 days idle / 7 days** |
+| Processed automatic-learning records | **180 days** |
+
+Candidate evidence is a **source and repetition safeguard**, **not proof that a procedure was re-executed or externally validated**. Automatic publication will not overwrite a manually edited skill, and reaching the managed cap blocks new automatic skills.
+
+## Data and testing
+
+Candidate and publication state live in local DSH SQLite; published skills remain files in the chosen native skill root. Interrupted changes are checked and may require human review **only for conflicts or unusual recovery states**. No secret/session database belongs in the public repository.
+
+Run `npm test` for portable tests. Live model learning and DSH registry/UI behavior require separate integration testing. See [config.example.json](config.example.json) and [SECURITY.md](SECURITY.md).
+
+Related: [Dream & Memory](https://github.com/Kerberos255/dsh-memory-dreaming) · [Instruction Files](https://github.com/Kerberos255/dsh-instruction-files).
+
+MIT licensed. See [LICENSE](LICENSE).
