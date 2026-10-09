@@ -2,14 +2,15 @@ import fs from 'node:fs';
 import { BlockAssembler } from '@deepseek-ai/dsh-llm';
 import { scopeId } from './workspace-io.js';
 import { parseSkill } from './workshop.js';
+import { trustedSkillSource } from './learning-access.js';
 
 const redact=value=>String(value).replace(/\b(?:sk-[a-zA-Z0-9_-]{16,}|[MN][A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,})\b/g,'[凭证已隐藏]').replace(/((?:api[_ -]?key|secret|password|access[_ -]?token|bot[_ -]?token|密码|密钥)\s*[:=]\s*["']?)[^\s"',;]{6,}/gi,'$1[凭证已隐藏]');
 export async function learnSkill(ctx,workshop,cwd,config,{sessionId,signal,agent}={}){
  const records=await ctx.sessionQuery.listSessions(signal),sources=[];
- for(const record of records){const header=record.header;if(sessionId&&header.id!==sessionId)continue;if(!header.cwd||header.origin==='subagent'||header.parentSession||header.id.startsWith('session-dsh-memory-'))continue;
+ for(const record of records){const header=record.header;if(sessionId&&header.id!==sessionId)continue;if(!trustedSkillSource(ctx,header)||header.id.startsWith('session-dsh-memory-'))continue;
   let current;try{current=fs.realpathSync(header.cwd);}catch{continue;}if(scopeId(current)!==scopeId(cwd))continue;
   const observation=await ctx.sessionQuery.observeSession(header.id,{signal});try{
-   if((observation.projections.values.agentPreset??'')!==config.agentPreset)continue;
+   // A registered Workspace, not an Agent preset, owns its reusable skills.
    const end=observation.events.findLast(event=>event.type==='turn/end');if(!end||['aborted','error','blocked','max-tokens'].includes(end.data.reason?.kind))continue;
    const start=observation.events.findLast(event=>event.type==='turn/start'&&event.seq<end.seq&&event.data.turn===end.data.turn);if(!start||end.seq-start.seq<config.minTurnEvents)continue;
    for(const event of observation.events.filter(event=>event.seq>=start.seq&&event.seq<=end.seq&&event.seq>=(observation.inheritedEventCount??0))){

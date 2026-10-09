@@ -28,12 +28,6 @@
         ]
       },
       {
-        "key": "agentPreset",
-        "label": "学习对应的 Agent 预设",
-        "type": "text",
-        "help": "只从此预设的已完成会话提炼技能，默认 agent。"
-      },
-      {
         "key": "selfLearning",
         "label": "完成任务后自动学习",
         "type": "boolean",

@@ -4,6 +4,7 @@ import { schema } from './config.js';
 import { Workshop } from './workshop.js';
 import { workspace,scopeId } from './workspace-io.js';
 import { learnSkill } from './learning.js';
+import { trustedSkillSource } from './learning-access.js';
 
 const json=value=>JSON.parse(JSON.stringify(value));
 
@@ -38,7 +39,7 @@ export default class SkillWorkshop extends PluginConfig {
  catalog(){return this.run(async(cwd,signal)=>({...await this.workshop.list(cwd,undefined,signal),learning:{busy:this.learning.has(scopeId(cwd)),reviews:this.workshop.db.prepare('SELECT * FROM reviews WHERE scope=? ORDER BY created DESC LIMIT 10').all(scopeId(cwd))}}));}
  health({cwd,agentPreset}={}){
   if(this.closed)throw new Error('技能工坊已卸载');const config=this.configFile.value;
-  if(agentPreset&&agentPreset!==config.agentPreset)return {enabled:config.enabled,applicable:false};
+  // A workspace can learn across presets; trust still follows the channel owner.
   const scope=cwd?scopeId(cwd):null,where=scope?' WHERE scope=?':'',args=scope?[scope]:[];
   const states=table=>Object.fromEntries(this.workshop.db.prepare('SELECT state,COUNT(*) AS count FROM '+table+where+' GROUP BY state').all(...args).map(row=>[row.state,row.count]));
   return {enabled:config.enabled,selfLearning:config.selfLearning,busy:scope?this.learning.has(scope):this.learning.size>0,proposals:states('proposals'),reviews:states('reviews'),recovery:states('publications')};
@@ -75,7 +76,7 @@ export default class SkillWorkshop extends PluginConfig {
   return {started:true};
  }
  reviewIdle(agent){
-  const config=this.configFile.value,cwd=agent.session.header.cwd;if(this.closed||!config.enabled||!config.selfLearning||!cwd||agent.status!=='idle'||agent.inbox?.hasPending||this.learning.size)return;
+  const config=this.configFile.value,cwd=agent.session.header.cwd;if(this.closed||!config.enabled||!config.selfLearning||!cwd||!trustedSkillSource(this.context,agent.session.header)||agent.status!=='idle'||agent.inbox?.hasPending||this.learning.size)return;
   if(!this.context.get('tools')?.get('skill_workshop',agent))return;
   const end=agent.session.snapshotEvents().findLast(event=>event.type==='turn/end');if(!end||['aborted','error','blocked','max-tokens'].includes(end.data.reason?.kind))return;
   const start=agent.session.snapshotEvents().findLast(event=>event.type==='turn/start'&&event.data.turn===end.data.turn&&event.seq<end.seq);
