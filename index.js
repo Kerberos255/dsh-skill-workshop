@@ -36,7 +36,7 @@ export default class SkillWorkshop extends PluginConfig {
  }
  ready(){if(this.closed||!this.configFile.value.enabled)throw new RemoteError('workshop/unavailable','技能工坊已停用',{});}
  async run(operation){this.ready();const signal=AbortSignal.any([this.abort.signal,this.configAbort.signal]);const task=(async()=>{try{const cwd=await workspace(this.context,this.configFile.value,signal);signal.throwIfAborted();return json(await operation(cwd,signal));}catch(error){if(error instanceof RemoteError)throw error;throw new RemoteError('workshop/operation-failed',error.message,{});}})();this.operations.add(task);try{return await task;}finally{this.operations.delete(task);}}
- catalog(){return this.run(async(cwd,signal)=>({...await this.workshop.list(cwd,undefined,signal),learning:{busy:this.learning.has(scopeId(cwd)),reviews:this.workshop.db.prepare('SELECT * FROM reviews WHERE scope=? ORDER BY created DESC LIMIT 10').all(scopeId(cwd))}}));}
+ catalog(){return this.run(async(cwd,signal)=>({...await this.workshop.list(cwd,undefined,signal),learning:{busy:this.learning.has(scopeId(cwd)),reviews:this.workshop.db.prepare('SELECT * FROM reviews WHERE scope=? ORDER BY created DESC LIMIT 10').all(scopeId(cwd)),candidates:this.workshop.db.prepare('SELECT COUNT(*) AS count FROM learning_candidates WHERE scope=?').get(scopeId(cwd)).count,candidateLimit:this.configFile.value.maxLearningCandidates,managedLimit:this.configFile.value.maxManagedSkills}}));}
  health({cwd,agentPreset}={}){
   if(this.closed)throw new Error('技能工坊已卸载');const config=this.configFile.value;
   // A workspace can learn across presets; trust still follows the channel owner.
@@ -54,10 +54,13 @@ export default class SkillWorkshop extends PluginConfig {
  startLearning(sessionId){return this.run((cwd,signal)=>this.startReview(cwd,{sessionId,signal}));}
  cancelLearning(){return this.run(cwd=>{this.learning.get(scopeId(cwd))?.abort.abort();return {cancelled:true};});}
  async housekeeping(){
-  if(this.closed||!this.configFile.value.enabled||!this.configFile.value.unusedDays||this.sweeping)return;
+  if(this.closed||!this.configFile.value.enabled||this.sweeping)return;
   const signal=AbortSignal.any([this.abort.signal,this.configAbort.signal]);
-  const task=(async()=>{for(const row of this.workshop.db.prepare('SELECT * FROM managed_workspaces').all()){
-   signal.throwIfAborted();const agents=this.context.get('agents')?.list()??[];
+  const task=(async()=>{
+   this.workshop.db.prepare("DELETE FROM reviews WHERE session NOT LIKE 'manual-%' AND state IN ('completed','skipped','failed','cancelled','interrupted') AND created<?").run(Date.now()-180*86400000);
+   for(const row of this.workshop.db.prepare('SELECT * FROM managed_workspaces').all()){
+   signal.throwIfAborted();this.workshop.prune(row.cwd);if(!this.configFile.value.unusedDays)continue;
+   const agents=this.context.get('agents')?.list()??[];
    if(this.learning.has(row.scope)||agents.some(agent=>agent.session.header.cwd&&scopeId(agent.session.header.cwd)===row.scope&&(agent.status!=='idle'||agent.inbox?.hasPending)))continue;
    try{await this.workshop.sweep(row.cwd,signal);}catch(error){if(signal.aborted)throw error;console.warn('[dsh-skill-workshop] 自动技能整理：',error.message);}
   }})();this.sweeping=task;this.operations.add(task);try{await task;}finally{this.operations.delete(task);this.sweeping=null;}

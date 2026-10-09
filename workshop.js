@@ -6,6 +6,7 @@ import { parseDocument, stringify } from 'yaml';
 import { isUtf8 } from 'node:buffer';
 import { readZip } from './zip.js';
 import { PublicationJournal } from './publication.js';
+import { mergeObservations,publicationDecision } from './learning-policy.js';
 import { scopeOf } from '@deepseek-ai/dsh-scope';
 import { digest, readBounded, safePath, projectRoot, ownedDirectory, scopeId, absent } from './workspace-io.js';
 
@@ -50,11 +51,27 @@ export class Workshop {
  constructor(filename,ctx,getConfig,options={}){fs.mkdirSync(path.dirname(filename),{recursive:true});this.ctx=ctx;this.getConfig=getConfig;this.db=new DatabaseSync(filename);this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY,scope TEXT NOT NULL,created INTEGER NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS proposal_scope ON proposals(scope,created);');
   this.publications=new PublicationJournal(this.db,{editable:(cwd,file)=>this.editable(cwd,file),hash:bundleHash,read:(filename,flat,limits)=>{if(flat){const text=readBounded(filename,limits.maxSkillBytes);return text===null?null:bundleHash({'SKILL.md':text});}return bundleHash(readBundle(filename,limits));},notify:(spec,destination)=>{try{ctx.emit('fs/observed',{displayPath:spec.action==='delete'?spec.source:spec.outputFlat?destination:path.join(destination,'SKILL.md')},{},{name:'write'});}catch(error){console.warn('[dsh-skill-workshop] 原生技能刷新通知失败：',error.message);}}},filename+'.publication-lock.sqlite',options.checkpoint);this.publications.recover();
   this.db.exec(`CREATE TABLE IF NOT EXISTS learned_proposals(id TEXT PRIMARY KEY,scope TEXT NOT NULL,sources TEXT NOT NULL,auto_publish INTEGER NOT NULL DEFAULT 0);
+   CREATE TABLE IF NOT EXISTS learning_candidates(scope TEXT NOT NULL,name TEXT NOT NULL,proposal_id TEXT NOT NULL,observations TEXT NOT NULL,updated INTEGER NOT NULL,PRIMARY KEY(scope,name));
    CREATE TABLE IF NOT EXISTS managed_workspaces(scope TEXT PRIMARY KEY,cwd TEXT NOT NULL);
    CREATE TABLE IF NOT EXISTS managed_skills(scope TEXT NOT NULL,name TEXT NOT NULL,path TEXT NOT NULL,revision TEXT NOT NULL,created INTEGER NOT NULL,last_used INTEGER NOT NULL,retired INTEGER,uses INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,name));`);
   this.recoverManaged();
  }
- markLearning(cwd,id,sources){this.proposal(cwd,id);this.db.prepare('INSERT INTO learned_proposals(id,scope,sources) VALUES(?,?,?)').run(id,scopeId(cwd),JSON.stringify(sources));this.db.prepare('INSERT OR REPLACE INTO managed_workspaces VALUES(?,?)').run(scopeId(cwd),cwd);}
+ candidate(cwd,name){const row=this.db.prepare('SELECT * FROM learning_candidates WHERE scope=? AND name=?').get(scopeId(cwd),name);return row?{...row,observations:JSON.parse(row.observations)}:null;}
+ canStageLearning(cwd,name){
+  this.prune(cwd);
+  if(this.candidate(cwd,name))return true;
+  return this.db.prepare('SELECT COUNT(*) AS count FROM learning_candidates WHERE scope=?').get(scopeId(cwd)).count<this.getConfig().maxLearningCandidates;
+ }
+ markLearning(cwd,id,sources,turnKeys=[]){
+  const proposal=this.proposal(cwd,id),scope=scopeId(cwd),previous=this.candidate(cwd,proposal.name);
+  if(!previous&&!this.canStageLearning(cwd,proposal.name))throw new Error('自动学习候选已达到安全上限');
+  const observations=mergeObservations(previous?.observations??[],turnKeys),now=Date.now();
+  this.db.prepare('INSERT INTO learned_proposals(id,scope,sources) VALUES(?,?,?)').run(id,scope,JSON.stringify(sources));
+  this.db.prepare('INSERT OR REPLACE INTO managed_workspaces VALUES(?,?)').run(scope,cwd);
+  this.db.prepare('INSERT INTO learning_candidates(scope,name,proposal_id,observations,updated) VALUES(?,?,?,?,?) ON CONFLICT(scope,name) DO UPDATE SET proposal_id=excluded.proposal_id,observations=excluded.observations,updated=excluded.updated').run(scope,proposal.name,id,JSON.stringify(observations),now);
+  if(previous&&previous.proposal_id!==id)this.db.prepare("UPDATE proposals SET state='rejected' WHERE id=? AND state='pending' AND id IN (SELECT id FROM learned_proposals)").run(previous.proposal_id);
+  return {observations:observations.length,ready:observations.length>=2};
+ }
  managed(cwd){return this.db.prepare('SELECT * FROM managed_skills WHERE scope=? ORDER BY last_used DESC').all(scopeId(cwd));}
  remember(proposal,cwd){
   const filename=path.join(proposal.root,proposal.target,'SKILL.md'),revision=bundleHash(proposal.files),stamp=Date.now();
@@ -69,12 +86,17 @@ export class Workshop {
  }
  autoApply(cwd,id,signal){
   signal?.throwIfAborted();const proposal=this.proposal(cwd,id),config=this.getConfig(),origin=this.db.prepare('SELECT 1 FROM learned_proposals WHERE id=? AND scope=?').get(id,scopeId(cwd));
-  if(!config.enabled||!config.autoPublish||!origin)return {published:false,reason:'manual-review'};
-  if(proposal.source){const owned=this.db.prepare('SELECT * FROM managed_skills WHERE scope=? AND name=?').get(scopeId(cwd),proposal.name);
-   if(!owned||owned.path!==proposal.source||owned.revision!==proposal.baseRevision)return {published:false,reason:'user-owned'};
-  }
+  if(!config.enabled||!origin)return {published:false,reason:'manual-review'};
+  const candidate=this.candidate(cwd,proposal.name),owned=this.db.prepare('SELECT * FROM managed_skills WHERE scope=? AND name=?').get(scopeId(cwd),proposal.name);
+  if(proposal.source&&(!owned||owned.path!==proposal.source||owned.revision!==proposal.baseRevision))return {published:false,reason:'user-owned'};
+  const decision=publicationDecision({observations:candidate?.observations??[],candidateId:candidate?.proposal_id,proposalId:id,
+   managedCount:this.db.prepare('SELECT COUNT(*) AS count FROM managed_skills WHERE scope=?').get(scopeId(cwd)).count,
+   alreadyManaged:!!owned,maxManagedSkills:config.maxManagedSkills,autoPublish:config.autoPublish});
+  if(!decision.published)return decision;
   this.db.prepare('UPDATE learned_proposals SET auto_publish=1 WHERE id=?').run(id);signal?.throwIfAborted();
-  this.apply(cwd,id,proposal.name);this.remember(proposal,cwd);return {published:true,name:proposal.name};
+  this.apply(cwd,id,proposal.name);this.remember(proposal,cwd);
+  this.db.prepare('DELETE FROM learning_candidates WHERE scope=? AND name=? AND proposal_id=?').run(scopeId(cwd),proposal.name,id);
+  return {published:true,name:proposal.name};
  }
  touch(cwd,name,now=Date.now()){this.db.prepare('UPDATE managed_skills SET last_used=?,uses=uses+1 WHERE scope=? AND name=?').run(now,scopeId(cwd),name);}
  async sweep(cwd,signal,now=Date.now()){
@@ -105,8 +127,14 @@ export class Workshop {
  async list(cwd,scope,signal){this.prune(cwd);const catalog=await this.snapshot(cwd,scope,signal);return {...catalog,workspace:cwd,targetRoot:this.root(cwd),recovery:this.publications.rows(cwd),managed:this.managed(cwd),proposals:this.proposals(cwd).map(({files,before,...proposal})=>({...proposal,files:Object.keys(files)})),skills:catalog.skills.map(item=>({...item,editable:!!item.path&&this.editable(cwd,item.path)}))};}
  prune(cwd){
   const config=this.getConfig(),scope=scopeId(cwd),eligible="scope=? AND state IN ('applied','rejected') AND id NOT IN (SELECT id FROM publications)";
+  const expiry=Date.now()-45*86400000;
+  this.db.prepare("UPDATE proposals SET state='rejected' WHERE state='pending' AND id IN (SELECT proposal_id FROM learning_candidates WHERE scope=? AND updated<?)").run(scope,expiry);
+  this.db.prepare('DELETE FROM learning_candidates WHERE scope=? AND updated<?').run(scope,expiry);
+  // Bound only auto-learned history regardless of legacy manual-history settings.
+  this.db.prepare("DELETE FROM proposals WHERE "+eligible+" AND id IN (SELECT id FROM learned_proposals) AND created<?").run(scope,Date.now()-180*86400000);
   if(config.historyDays>0)this.db.prepare('DELETE FROM proposals WHERE '+eligible+' AND created<?').run(scope,Date.now()-config.historyDays*86400000);
   if(config.maxHistory>0)this.db.prepare('DELETE FROM proposals WHERE '+eligible+' AND id NOT IN (SELECT id FROM proposals WHERE '+eligible+' ORDER BY created DESC,id DESC LIMIT ?)').run(scope,scope,config.maxHistory);
+  this.db.prepare('DELETE FROM learned_proposals WHERE id NOT IN (SELECT id FROM proposals)').run();
  }
  editable(cwd,filename){
   const roots=[path.join(projectRoot(cwd),'.dsh/skills'),path.join(projectRoot(cwd),'.agents/skills'),path.join(this.ctx.dshHomePath(),'skills')];

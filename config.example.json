@@ -17,6 +17,8 @@
   "maxBundleBytes": 4194304,
   "maxBundleFiles": 100,
   "maxProposals": 100,
-  "historyDays": 0,
-  "maxHistory": 0
+  "maxLearningCandidates": 32,
+  "maxManagedSkills": 64,
+  "historyDays": 180,
+  "maxHistory": 500
 }
