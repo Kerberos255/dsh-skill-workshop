@@ -7,11 +7,26 @@ import { learnSkill } from './learning.js';
 import { trustedSkillSource } from './learning-access.js';
 
 const json=value=>JSON.parse(JSON.stringify(value));
+export function learningFailureCode(error){
+ const code=String(error?.code??'');
+ if(/^[A-Z][A-Z0-9_]{1,31}$/.test(code))return code;
+ const message=String(error?.message??'');
+ if(message.includes('技能复查模型没有完整结束'))return 'model-incomplete';
+ if(message.includes('技能复查未返回有效 JSON'))return 'model-invalid-json';
+ if(message.includes('技能复查缺少理由与来源'))return 'missing-evidence';
+ if(message.includes('技能提案来源不匹配'))return 'source-mismatch';
+ if(message.includes('模型未声明上下文窗口'))return 'model-context-missing';
+ if(message.includes('请先配置官方模型'))return 'model-unconfigured';
+ if(message.includes('无效技能')||message.includes('技能名称'))return 'invalid-skill';
+ if(message.includes('技能复查'))return 'review-rejected';
+ return 'unknown';
+}
 
 export default class SkillWorkshop extends PluginConfig {
  static inject=['dshHomePath','workspaceController','skills','sessionQuery','agentDefaultModel','llm','tokenMeter'];
  constructor(ctx,legacy={}){
   super(ctx,{service:'skillWorkshop',packageName:'dsh-skill-workshop',schema},legacy);this.context=ctx;this.closed=false;this.abort=new AbortController();this.configAbort=new AbortController();this.operations=new Set();this.learning=new Map();
+  ctx.inject(['pluginDiagnostics'],scope=>{const diag=scope.get('pluginDiagnostics');diag.start('dsh-skill-workshop');scope.effect(()=>()=>diag.stop('dsh-skill-workshop'));});
   this.workshop=new Workshop(ctx.dshHomePath('skill-workshop','state.sqlite'),ctx,()=>this.configFile.value);
   this.workshop.db.exec('CREATE TABLE IF NOT EXISTS reviews(scope TEXT NOT NULL,session TEXT NOT NULL,turn INTEGER NOT NULL,state TEXT NOT NULL,created INTEGER NOT NULL,result TEXT,PRIMARY KEY(scope,session,turn));');
   this.workshop.db.prepare("UPDATE reviews SET state='interrupted' WHERE state='running'").run();
@@ -62,12 +77,13 @@ export default class SkillWorkshop extends PluginConfig {
    signal.throwIfAborted();this.workshop.prune(row.cwd);if(!this.configFile.value.unusedDays)continue;
    const agents=this.context.get('agents')?.list()??[];
    if(this.learning.has(row.scope)||agents.some(agent=>agent.session.header.cwd&&scopeId(agent.session.header.cwd)===row.scope&&(agent.status!=='idle'||agent.inbox?.hasPending)))continue;
-   try{await this.workshop.sweep(row.cwd,signal);}catch(error){if(signal.aborted)throw error;console.warn('[dsh-skill-workshop] 自动技能整理：',error.message);}
+   try{await this.workshop.sweep(row.cwd,signal);}catch(error){if(signal.aborted)throw error;this.context.get('pluginDiagnostics')?.record('dsh-skill-workshop','error','housekeeping.failed',{code:error?.code,state:'failed'});console.warn('[dsh-skill-workshop] 自动技能整理：',error.message);}
   }})();this.sweeping=task;this.operations.add(task);try{await task;}finally{this.operations.delete(task);this.sweeping=null;}
  }
  startReview(cwd,{sessionId,turn=0,signal,agent}={}){
   const scope=scopeId(cwd);if(this.learning.has(scope))throw new Error('此工作区正在生成技能提案');const abort=new AbortController(),combined=AbortSignal.any([abort.signal,this.abort.signal,this.configAbort.signal,...signal?[signal]:[]]);
   const id=sessionId??'manual-'+Date.now();this.workshop.db.prepare("INSERT OR REPLACE INTO reviews VALUES(?,?,?,'running',?,NULL)").run(scope,id,turn,Date.now());
+  this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop','info','learning.started',{state:'running'});
   const entry={abort,maintenance:!!agent};this.learning.set(scope,entry);
   const learn=async signal=>{
    await this.workshop.sweep(cwd,signal);signal.throwIfAborted();
@@ -75,7 +91,16 @@ export default class SkillWorkshop extends PluginConfig {
    if(result.proposal)result.publication=this.workshop.autoApply(cwd,result.proposal.id,signal);return result;
   };
   const task=Promise.resolve().then(()=>{combined.throwIfAborted();return agent?agent.runMaintenance(nativeSignal=>learn(AbortSignal.any([combined,nativeSignal]))):learn(combined);});entry.task=task;this.operations.add(task);
-  task.then(result=>this.workshop.db.prepare('UPDATE reviews SET state=?,result=? WHERE scope=? AND session=? AND turn=?').run(result.empty?'skipped':'completed',JSON.stringify(result),scope,id,turn),error=>this.workshop.db.prepare('UPDATE reviews SET state=?,result=? WHERE scope=? AND session=? AND turn=?').run(combined.aborted?'cancelled':'failed',JSON.stringify({error:error.message}),scope,id,turn)).finally(()=>{this.learning.delete(scope);this.operations.delete(task);}).catch(()=>{});
+  task.then(result=>{
+   const state=result.empty?'skipped':'completed';
+   this.workshop.db.prepare('UPDATE reviews SET state=?,result=? WHERE scope=? AND session=? AND turn=?').run(state,JSON.stringify(result),scope,id,turn);
+   this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop','info','learning.finished',{state});
+  },error=>{
+   const state=combined.aborted?'cancelled':'failed';
+   this.workshop.db.prepare('UPDATE reviews SET state=?,result=? WHERE scope=? AND session=? AND turn=?').run(state,JSON.stringify({error:error.message}),scope,id,turn);
+   const code=learningFailureCode(error);
+   this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop',state==='failed'?'error':'warn','learning.failed',{state,code});
+  }).finally(()=>{this.learning.delete(scope);this.operations.delete(task);}).catch(()=>{});
   return {started:true};
  }
  reviewIdle(agent){
