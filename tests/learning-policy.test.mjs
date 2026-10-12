@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evidencedTurns,mergeObservations,publicationDecision } from '../learning-policy.js';
+import { evidencedTurns,mergeObservations,publicationDecision,quoteMatches } from '../learning-policy.js';
 import { reusableProcedure } from '../learning-policy.js';
 
 test('paired real task sources count once per completed turn',()=>{
@@ -37,4 +37,15 @@ test('malformed or unpaired evidence never unlocks publication',()=>{
 test('model output without a reusable verification and rollback procedure is rejected',()=>{
  assert.equal(reusableProcedure('## 适用条件\n生产故障\n## 操作步骤\n修复\n## 验证\n测试\n## 回退\n回滚'),true);
  assert.equal(reusableProcedure('## 操作步骤\n总之问题解决了'),false);
+});
+test('quote matching tolerates whitespace and punctuation but still rejects fabrication',()=>{
+ assert.equal(quoteMatches('修复服务并验证','修复服务并验证'),true,'逐字命中');
+ assert.equal(quoteMatches('修复服务 并 验证','修复服务并验证'),true,'空白差异');
+ assert.equal(quoteMatches('修复服务，并验证。','修复服务,并验证,'),true,'全角半角标点差异');
+ assert.equal(quoteMatches('他说“完成”了','他说"完成"了'),true,'弯引号与直引号');
+ assert.equal(quoteMatches('修复服务并验证','我修复了所有问题'),false,'编造内容必须失败');
+ assert.equal(quoteMatches('凭证 [凭证已隐藏] 已保存','[凭证已隐藏]'),false,'脱敏片段不能作为引用');
+ assert.equal(quoteMatches('修复服务','修'),false,'过短');
+ assert.equal(quoteMatches('修复服务','x'.repeat(1001)),false,'过长');
+ assert.equal(quoteMatches('修复服务',null),false,'非字符串');
 });

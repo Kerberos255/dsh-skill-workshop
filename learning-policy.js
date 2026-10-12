@@ -17,6 +17,19 @@ export function reusableProcedure(body) {
   /失败|回退|恢复|rollback|fallback|recovery/i,
  ].every(pattern=>headings.some(line=>pattern.test(line)));
 }
+// A quote proves the model actually read the source, but exact byte equality is
+// too strict: whitespace, quote style and CJK punctuation legitimately differ.
+export function normalizeQuote(text) {
+ return String(text??'').replace(/\s+/g,'').replace(/[“”‘’]/g,'"').replace(/[，。！？；：、]/g,',');
+}
+export function quoteMatches(sourceText,quote) {
+ if(typeof quote!=='string')return false;
+ const trimmed=quote.trim();
+ if(trimmed.length<4||trimmed.length>1000)return false;
+ if(trimmed.includes('[凭证已隐藏]'))return false;
+ const text=String(sourceText??'');
+ return text.includes(trimmed)||normalizeQuote(text).includes(normalizeQuote(trimmed));
+}
 export function mergeObservations(previous,latest,limit=16) {
  return [...new Set([...previous,...latest].filter(x=>typeof x==='string'&&x.length>0))].slice(-limit);
 }
