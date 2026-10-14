@@ -8,6 +8,7 @@ A native DSH **skill authoring and self-learning workshop**. Import, edit, and m
 
 - Browse, create, update, and import native DSH skills from Markdown, directories, and supported skill archives.
 - Learn reusable workflows from completed tasks without granting a model direct write access to the published skill root.
+- Recover from malformed model JSON with one bounded retry, while keeping evidence checks unchanged.
 - **Unattended auto-promotion by default:** the same skill needs evidence from at least **two distinct successful task turns**, each linked to genuine user requests and assistant results.
 - Guard against uncontrolled growth: bounded candidates and managed skills, stale-candidate expiry, history pruning, and retirement of unused workshop-owned skills.
 - Protect manual edits and externally managed skills from automated overwrite; recover interrupted publications using durable records and hash checks.
@@ -42,6 +43,12 @@ Replace the profile name as needed, pin a commit if desired, and restart DSH aft
 
 Candidate evidence is a **source and repetition safeguard**, **not proof that a procedure was re-executed or externally validated**. Automatic publication will not overwrite a manually edited skill, and reaching the managed cap blocks new automatic skills.
 
+## Model JSON recovery
+
+The workshop accepts one complete JSON object, a single JSON code fence, or an unambiguous JSON object wrapped in explanatory text. It never invents missing keys, repairs fabricated citations, or bypasses source validation. If a model **finishes successfully** but returns malformed JSON, the workshop makes **at most one fresh retry** with strict JSON instructions and the same verified source material. Cancellation, provider errors, and output-token truncation do not trigger this retry. Auto-publication still requires two distinct successful task turns with verifiable evidence.
+
+Diagnostic events report only the attempt number, safe format category, output length and token limit—never raw output, conversation content, or credentials. This version uses prompt-level constraints because the current DSH provider-neutral request type does not expose a generic JSON Schema response option. Host-free parser tests run in CI; end-to-end model stream retry tests require the DSH peer runtime.
+
 ## Data and testing
 
 Candidate and publication state live in local DSH SQLite; published skills remain files in the chosen native skill root. Interrupted changes are checked and may require human review **only for conflicts or unusual recovery states**. No secret/session database belongs in the public repository.
@@ -55,10 +62,3 @@ MIT licensed. See [LICENSE](LICENSE).
 ## Optional plugin diagnostics
 
 The plugin optionally emits privacy-restricted operation and failure metadata to dsh-plugin-diagnostics. Diagnostics contain event type, status, fixed error code and elapsed time; conversation content and credentials are not logged. The diagnostics plugin is optional and does not change the host requirements.
-
-
-## Model JSON recovery
-
-The workshop accepts one complete JSON object, a single JSON code fence, or an unambiguous JSON object wrapped in explanatory text. It never invents missing keys, repairs fabricated citations, or bypasses source validation. If a model **finishes successfully** but returns malformed JSON, the workshop makes **at most one fresh retry** with strict JSON instructions and the same verified source material. Cancellation, provider errors, and output-token truncation do not trigger this retry. Auto-publication still requires two distinct successful task turns with verifiable evidence.
-
-Diagnostic events report only the attempt number, safe format category, output length and token limit—never raw output, conversation content, or credentials. This version uses prompt-level constraints because the current DSH provider-neutral request type does not expose a generic JSON Schema response option. Host-free parser tests run in CI; end-to-end model stream retry tests require the DSH peer runtime.
