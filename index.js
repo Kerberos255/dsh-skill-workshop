@@ -87,7 +87,11 @@ export default class SkillWorkshop extends PluginConfig {
   const entry={abort,maintenance:!!agent};this.learning.set(scope,entry);
   const learn=async signal=>{
    await this.workshop.sweep(cwd,signal);signal.throwIfAborted();
-   const result=await learnSkill(this.context,this.workshop,cwd,this.configFile.value,{sessionId,signal,agent});signal.throwIfAborted();
+   const result=await learnSkill(this.context,this.workshop,cwd,this.configFile.value,{sessionId,signal,agent,onDiagnostic:detail=>{
+    // Structured telemetry only: no prompts, generated text or source identifiers.
+    const {event,attempt,format,formatCode,outputChars,maxTokens}=detail;
+    this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop',event==='learning.json-invalid'?'warn':'info',event,{attempt,format,formatCode,outputChars,maxTokens});
+   }});signal.throwIfAborted();
    if(result.proposal)result.publication=this.workshop.autoApply(cwd,result.proposal.id,signal);return result;
   };
   const task=Promise.resolve().then(()=>{combined.throwIfAborted();return agent?agent.runMaintenance(nativeSignal=>learn(AbortSignal.any([combined,nativeSignal]))):learn(combined);});entry.task=task;this.operations.add(task);

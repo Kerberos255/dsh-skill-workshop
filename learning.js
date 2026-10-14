@@ -5,9 +5,10 @@ import { parseSkill } from './workshop.js';
 import { trustedSkillSource } from './learning-access.js';
 import { evidencedTurns,reusableProcedure,quoteMatches } from './learning-policy.js';
 import { verifyWorkshopFinish } from './model-completion.js';
+import { parseSkillProposalJson, SkillJsonFormatError } from './skill-json.js';
 
 const redact=value=>String(value).replace(/\b(?:sk-[a-zA-Z0-9_-]{16,}|[MN][A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,})\b/g,'[凭证已隐藏]').replace(/((?:api[_ -]?key|secret|password|access[_ -]?token|bot[_ -]?token|密码|密钥)\s*[:=]\s*["']?)[^\s"',;]{6,}/gi,'$1[凭证已隐藏]');
-export async function learnSkill(ctx,workshop,cwd,config,{sessionId,signal,agent}={}){
+export async function learnSkill(ctx,workshop,cwd,config,{sessionId,signal,agent,onDiagnostic}={}){
  const records=await ctx.sessionQuery.listSessions(signal),sources=[];
  for(const record of records){const header=record.header;if(sessionId&&header.id!==sessionId)continue;if(!trustedSkillSource(ctx,header)||header.id.startsWith('session-dsh-memory-'))continue;
   let current;try{current=fs.realpathSync(header.cwd);}catch{continue;}if(scopeId(current)!==scopeId(cwd))continue;
@@ -37,11 +38,36 @@ export async function learnSkill(ctx,workshop,cwd,config,{sessionId,signal,agent
  // OpenCode Go requires x-opencode-session, passed by the DSH LLM adapter
  // when a sessionId is provided. Manual runs need a stable workspace scope.
  const modelSessionId=agent?.session?.id??'dsh-skill-'+scopeId(cwd,config.agentPreset).slice(0,32);
+ const diagnose=detail=>{try{onDiagnostic?.(detail);}catch{/* Observability must not interrupt learning. */}};
  const usedTokens=systemTokens+ctx.tokenMeter.estimateMessage(payload(selected));
  const maxTokens=Math.min(outputLimit,info.context.contextWindow-usedTokens-2048);
  if(maxTokens<256)throw new Error('技能复查模型输出预算不足，请缩小输入或调整模型');
- const assembler=new BlockAssembler();for await(const chunk of ctx.llm.stream({provider:target.provider,model:target.model,messages:[system,payload(selected)],maxTokens,purpose:'skill-workshop',sessionId:modelSessionId,signal})){signal?.throwIfAborted();assembler.push(chunk);}
- verifyWorkshopFinish(assembler.finish,maxTokens);let output;try{output=JSON.parse(assembler.blocks().filter(block=>block.type==='text').map(block=>block.text).join('').trim().replace(/^```(?:json)?\s*|\s*```$/g,''));}catch{throw new Error('技能复查未返回有效 JSON');}
+ // DSH GenerateOptions does not expose a provider-neutral responseFormat/json_schema.
+ // Ask for a single JSON document; retry only when the completed output is malformed.
+ // Never feed untrusted raw model output back as instructions.
+ let output,usage;
+ for(let attempt=1;attempt<=2;attempt++){
+  signal?.throwIfAborted();
+  const retryInstructions=attempt===2
+   ? '\n上一次回答无法解析为唯一完整的 JSON 对象。这次必须仅返回一个 JSON 对象，没有代码围栏、解释文字或 Markdown；字符串中的换行和引号须正确 JSON 转义。不要编造引用或来源；证据不足就返回 {"skip":true}。'
+   : '\n输出必须是唯一完整 JSON 对象，不要输出代码围栏、Markdown 或说明；JSON 字符串中的换行必须写为 \\n、引号须转义。证据不足只返回 {"skip":true}。';
+  const requestSystem={role:'system',content:[{type:'text',text:system.content[0].text+retryInstructions}]};
+  const assembler=new BlockAssembler();
+  for await(const chunk of ctx.llm.stream({provider:target.provider,model:target.model,messages:[requestSystem,payload(selected)],maxTokens,purpose:'skill-workshop',sessionId:modelSessionId,signal})){
+   signal?.throwIfAborted();assembler.push(chunk);
+  }
+  verifyWorkshopFinish(assembler.finish,maxTokens);
+  const raw=assembler.blocks().filter(block=>block.type==='text').map(block=>block.text).join('');
+  try{
+   const parsed=parseSkillProposalJson(raw);output=parsed.value;usage=assembler.usage??null;
+   diagnose({event:'learning.json-valid',attempt,format:parsed.format,outputChars:raw.length,maxTokens});
+   break;
+  }catch(error){
+   if(!(error instanceof SkillJsonFormatError))throw error;
+   diagnose({event:'learning.json-invalid',attempt,formatCode:error.formatCode,outputChars:raw.length,maxTokens});
+   if(attempt===2)throw error;
+  }
+ }
  if(output.skip===true)return {empty:true,message:'当前材料没有值得提炼的新技能。'};
  if(typeof output.reason!=='string'||output.reason.length>4000||!Array.isArray(output.sources)||output.sources.length<1||output.sources.length>10)throw new Error('技能复查缺少理由与来源');
  const verified=[];for(const item of output.sources){const source=selected.find(source=>source.sessionId===item.sessionId&&source.seq===item.seq);if(!source||!quoteMatches(source.text,item.quote))continue;verified.push({item,source});}
@@ -60,5 +86,5 @@ export async function learnSkill(ctx,workshop,cwd,config,{sessionId,signal,agent
  if(current&&current.files['SKILL.md']===output.files['SKILL.md'])return {empty:true,message:'已有技能内容一致，无需更新。'};
  signal?.throwIfAborted();const proposal=await workshop.propose(cwd,{...(current?{name:current.name,revision:current.revision}:{}),files:{...current?.files,...output.files},reason:output.reason+'\n\n来源：'+verified.map(entry=>entry.item.sessionId+'#'+entry.item.seq).join(', ')},agent,signal);
  const learning=workshop.markLearning(cwd,proposal.id,verified.map(entry=>entry.item),turnKeys);
- const {before,files,...summary}=proposal;return {proposal:{...summary,files:Object.keys(files)},learning,usage:assembler.usage??null};
+ const {before,files,...summary}=proposal;return {proposal:{...summary,files:Object.keys(files)},learning,usage};
 }

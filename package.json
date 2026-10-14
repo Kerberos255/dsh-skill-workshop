@@ -61,6 +61,6 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test tests/zip.test.mjs tests/learning-access.test.mjs"
+    "test": "node --test tests/zip.test.mjs tests/learning-access.test.mjs tests/skill-json-parser.test.mjs"
   }
 }

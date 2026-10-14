@@ -55,3 +55,10 @@ MIT licensed. See [LICENSE](LICENSE).
 ## Optional plugin diagnostics
 
 The plugin optionally emits privacy-restricted operation and failure metadata to dsh-plugin-diagnostics. Diagnostics contain event type, status, fixed error code and elapsed time; conversation content and credentials are not logged. The diagnostics plugin is optional and does not change the host requirements.
+
+
+## Model JSON recovery
+
+The workshop accepts one complete JSON object, a single JSON code fence, or an unambiguous JSON object wrapped in explanatory text. It never invents missing keys, repairs fabricated citations, or bypasses source validation. If a model **finishes successfully** but returns malformed JSON, the workshop makes **at most one fresh retry** with strict JSON instructions and the same verified source material. Cancellation, provider errors, and output-token truncation do not trigger this retry. Auto-publication still requires two distinct successful task turns with verifiable evidence.
+
+Diagnostic events report only the attempt number, safe format category, output length and token limit—never raw output, conversation content, or credentials. This version uses prompt-level constraints because the current DSH provider-neutral request type does not expose a generic JSON Schema response option. Host-free parser tests run in CI; end-to-end model stream retry tests require the DSH peer runtime.

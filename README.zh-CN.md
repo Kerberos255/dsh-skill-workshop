@@ -46,3 +46,10 @@ dsh plugin --profile desktop add github:Kerberos255/dsh-skill-workshop
 相关：[Dream 与长期记忆](https://github.com/Kerberos255/dsh-memory-dreaming) · [指令文件与角色](https://github.com/Kerberos255/dsh-instruction-files)。
 
 许可证：[MIT](LICENSE)。
+
+
+## 模型 JSON 容错与重试
+
+自动学习接受一个完整 JSON 对象、单个 JSON 代码围栏，或被少量说明文字包裹的唯一完整 JSON 对象。不会编造缺失字段或来源证据，也不会降低两次独立成功任务的自动发布门槛。只有在模型**正常完成但返回格式不合法 JSON**时，才使用同一份核验过的来源材料最多再生成一次；取消、模型报错、输出 Tokens 截断不触发格式重试。
+
+诊断仅记录尝试次数、格式分类、输出字符数和 Token 上限，不保存模型生成原文、对话或凭证。当前 DSH 通用模型请求类型没有 JSON Schema 响应格式选项，因此使用严格提示词与确定性解析器。CI 运行无宿主依赖的解析测试，涉及真实流式模型调用的回归测试需在 DSH Host 环境运行。
