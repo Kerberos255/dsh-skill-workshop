@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {parseSkill,Workshop} from '../workshop.js';
 import {schema} from '../config.js';
 
 test('learned candidates survive restart, dedupe turns and automatically publish only after independent evidence',async()=>{
- const root=fs.mkdtempSync(path.resolve('skill-gate-fixture-')),cwd=path.join(root,'workspace'),home=path.join(root,'home');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'skill-gate-fixture-')),cwd=path.join(root,'workspace'),home=path.join(root,'home');
  fs.mkdirSync(cwd,{recursive:true});fs.mkdirSync(home,{recursive:true});
  const conf={...schema.defaults,unusedDays:90},dbFile=path.join(home,'workshop.sqlite');
  const ctx={dshHomePath:(...parts)=>path.join(home,...parts),emit(){},get(){return undefined;},
@@ -36,7 +37,7 @@ test('learned candidates survive restart, dedupe turns and automatically publish
  }finally{shop?.close();fs.rmSync(root,{recursive:true,force:true});}
 });
 test('candidate ceiling is enforced before new pending proposal',async()=>{
- const root=fs.mkdtempSync(path.resolve('skill-limit-fixture-')),cwd=path.join(root,'workspace'),home=path.join(root,'home');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'skill-limit-fixture-')),cwd=path.join(root,'workspace'),home=path.join(root,'home');
  fs.mkdirSync(cwd,{recursive:true});fs.mkdirSync(home,{recursive:true});
  const conf={...schema.defaults,maxLearningCandidates:4},ctx={dshHomePath:(...items)=>path.join(home,...items),emit(){},get(){return undefined;}};
  const shop=new Workshop(path.join(home,'state.sqlite'),ctx,()=>conf);

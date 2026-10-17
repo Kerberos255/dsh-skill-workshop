@@ -88,7 +88,7 @@ export default class SkillWorkshop extends PluginConfig {
   const learn=async signal=>{
    await this.workshop.sweep(cwd,signal);signal.throwIfAborted();
    const result=await learnSkill(this.context,this.workshop,cwd,this.configFile.value,{sessionId,signal,agent,onDiagnostic:detail=>{
-    // Structured telemetry only: no prompts, generated text or source identifiers.
+    // Structured telemetry only: do not log prompts, model output, skill text or source IDs.
     const {event,attempt,format,formatCode,outputChars,maxTokens}=detail;
     this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop',event==='learning.json-invalid'?'warn':'info',event,{attempt,format,formatCode,outputChars,maxTokens});
    }});signal.throwIfAborted();
