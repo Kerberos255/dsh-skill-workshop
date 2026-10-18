@@ -38,7 +38,7 @@ export default class SkillWorkshop extends PluginConfig {
   ctx.effect(()=>{const timer=setInterval(()=>{void this.housekeeping().catch(()=>{});},6*3600000);timer.unref?.();void this.housekeeping().catch(()=>{});return()=>clearInterval(timer);});
   ctx.effect(()=>async()=>{this.closed=true;this.abort.abort();await Promise.allSettled([...this.operations]);this.workshop.close();});
   for(const initialize of initializers)initialize.call(this);
-  ctx.inject(['tools'],scope=>scope.tools.register({name:'skill_workshop',description:'查看原生技能或提出修订。日常任务完成后的自动学习按工坊设置发布和整理受管技能；手工与导入提案在设置页审阅。',
+  ctx.inject(['tools'],scope=>scope.tools.register({name:'skill_workshop',description:'列出、读取技能或提交修订提案；手工提案在设置页审阅。',
    parameters:{type:'object',properties:{action:{type:'string',enum:['list','read','propose']},name:{type:'string'},revision:{type:['string','null']},files:{type:'object',additionalProperties:{type:'string'}},reason:{type:'string'}},required:['action'],additionalProperties:false},
    output:{schema:{type:'object',additionalProperties:true},render:(_args,result)=>[{type:'text',text:JSON.stringify(result)}]},
    execute:async(args,exec)=>{exec.signal.throwIfAborted();this.ready();const cwd=exec.agent?.session.header.cwd;if(!cwd)throw new Error('缺少会话工作区');const signal=AbortSignal.any([exec.signal,this.abort.signal,this.configAbort.signal]);
