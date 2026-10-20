@@ -11,7 +11,7 @@
   "learningCooldownMinutes": 60,
   "maxReviewsPerDay": 8,
   "reviewInputTokens": 8000,
-  "reviewOutputTokens": 4096,
+  "reviewOutputTokens": 16384,
   "minTurnEvents": 8,
   "maxSkillBytes": 1048576,
   "maxBundleBytes": 4194304,
