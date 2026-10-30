@@ -34,9 +34,11 @@ for (const [name, page] of Object.entries(pages)) {
   manifest.dsh.client.inject = manifest.dsh.client.inject.filter(id => !['@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-client-store'].includes(id));
   for (const id of ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-ui-plugin-manager', '@deepseek-ai/dsh-client-ui-primitives']) {
     if (!manifest.dsh.client.inject.includes(id)) manifest.dsh.client.inject.push(id);
-    manifest.peerDependencies[id] = '0.2.0-rc.2 || 0.2.1-alpha.1';
+    manifest.peerDependencies ??= {};
+    manifest.peerDependencies[id] ??= '0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1';
   }
-  manifest.peerDependencies['@deepseek-ai/dsh-typert-protocol'] = '0.2.0-rc.2 || 0.2.1-alpha.1';
+  manifest.peerDependencies ??= {};
+  manifest.peerDependencies['@deepseek-ai/dsh-typert-protocol'] ??= '0.2.0-rc.2 || 0.2.1-rc.2 || 0.2.1-alpha.1 || >=0.2.1';
   for (const file of ['locale/', 'config.example.json', ...(name === 'dsh-web-search-router' ? [] : ['config.js', 'plugin-settings/', 'client.js'])]) if (!manifest.files.includes(file)) manifest.files.push(file);
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
   fs.mkdirSync(path.join(directory, 'locale'), { recursive: true });

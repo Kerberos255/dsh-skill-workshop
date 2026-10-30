@@ -9,7 +9,7 @@ A native DSH **skill authoring and self-learning workshop**. Import, edit, and m
 - Browse, create, update, and import native DSH skills from Markdown, directories, and supported skill archives.
 - Learn reusable workflows from completed tasks without granting a model direct write access to the published skill root.
 - Recover from malformed model JSON with one bounded retry, while keeping evidence checks unchanged.
-- **Unattended auto-promotion by default:** the same skill needs evidence from at least **two distinct successful task turns**, each linked to genuine user requests and assistant results.
+- **Unattended auto-promotion by default:** the same method needs evidence from at least **two independently completed task instances**, each linked to genuine user requests and assistant results.
 - Guard against uncontrolled growth: bounded candidates and managed skills, stale-candidate expiry, history pruning, and retirement of unused workshop-owned skills.
 - Protect manual edits and externally managed skills from automated overwrite; recover interrupted publications using durable records and hash checks.
 
@@ -26,34 +26,47 @@ Replace the profile name as needed, pin a commit if desired, and restart DSH aft
 ## Quick start
 
 1. Open **Settings → Plugins → Skill Workshop**. Choose the project skill root (`.dsh/skills`) or user skill root (`DSH_HOME/skills`).
-2. Run regular DSH tasks. Eligible successful turns may generate **skill candidates**; short, failed and interrupted tasks are skipped.
-3. Once a candidate has independent evidence from two distinct turns and passes checks, the workshop **publishes it without asking for per-skill manual confirmation**.
+2. Run regular DSH tasks. A first eligible task stores a **compact experience candidate**, not a complete skill or a manual-review proposal; short, failed and interrupted tasks are skipped.
+3. Once the same method has evidence from two independent completed tasks and passes checks, the workshop **publishes it without asking for per-skill manual confirmation**.
 4. Inspect candidate/managed counts and customize limits, or use the editor/import screen for manual skills. Manual import and external edits retain their review flow.
 
 ## Growth-control defaults
 
 | Bound | Default |
 | --- | --- |
-| Pending auto-learned candidates per workspace | **32** |
+| Pending auto-learned candidates per workspace | **64** |
 | Workshop-managed skills per workspace | **64** |
-| Candidate expiry without fresh evidence | **45 days** |
+| Candidate archive without fresh independent evidence | **21 days**, configurable with `candidateIdleDays` |
 | Automatic learning cooldown / daily attempts | **60 minutes / 8** |
 | Managed skill retirement / grace | **90 days idle / 7 days** |
 | Processed automatic-learning records | **180 days** |
+| Pending task references / processed task fingerprints | **128 / 512** per workspace |
+| Archived candidate summaries | **256**, at most **180 days** |
+| Processed proposal history | **180 days / 500 records**; explicit legacy limits remain respected |
 
 Candidate evidence is a **source and repetition safeguard**, **not proof that a procedure was re-executed or externally validated**. Automatic publication will not overwrite a manually edited skill, and reaching the managed cap blocks new automatic skills.
 
+## Candidate reuse and learning queues
+
+Learning requests include the stable IDs and summaries of relevant existing candidates. New evidence for the same conditions, procedure and validation method reinforces the selected candidate even when the model proposes different wording or a different name. Similar topics with different methods are kept separate. Continuations, repeated observation and the same already-recorded task do not add evidence. Reusability, verification and specificity are assessed before admitting an experience; these model judgments still require matching source citations.
+
+Completed task references are queued before cooldown, daily-limit and busy checks. While agents are idle, the workshop checks the queue every minute and extracts experiences from at most four complete task pairs in one request. At most one candidate receives a full skill draft per review. A failed draft preserves verified evidence; automatic failures back off and stop after three attempts. Manual learning can explicitly retry them.
+
+A full pool first rotates out weak single-evidence candidates that have not progressed for at least seven days. Fresh candidates, candidates with two pieces of evidence, and publications in recovery are protected. If capacity remains full, learning switches to reinforcement-only mode; tasks without a relevant candidate are deferred before model generation. Publishing, rejecting and expiry release candidate slots. Archived summaries and bounded task fingerprints prevent replay while their history is retained. Manual pending proposals are preserved independently.
+
+Version **0.1.15** migrates existing candidates in place, preserving their original proposal references and evidence while adding stable IDs, summaries and processed-source fingerprints. It does not merge or promote older candidates merely because their titles are similar. Back up local plugin state before upgrading, then restart DSH to load the new code.
+
 ## Model JSON recovery
 
-The workshop accepts one complete JSON object, a single JSON code fence, or an unambiguous JSON object wrapped in explanatory text. It never invents missing keys, repairs fabricated citations, or bypasses source validation. If a model **finishes successfully** but returns malformed JSON, the workshop makes **at most one fresh retry** with strict JSON instructions and the same verified source material. Cancellation, provider errors, and output-token truncation do not trigger this retry. Auto-publication still requires two distinct successful task turns with verifiable evidence.
+The workshop accepts one complete JSON object, a single JSON code fence, or an unambiguous JSON object wrapped in explanatory text. It never invents missing keys, repairs fabricated citations, or bypasses source validation. If a model **finishes successfully** but returns malformed JSON, the workshop makes **at most one fresh retry** with strict JSON instructions and the same verified source material. Cancellation, provider errors, and output-token truncation do not trigger this retry. The experience and full-draft phases use the same bounded JSON recovery. Auto-publication still requires two independent completed tasks with verifiable sources.
 
-Diagnostic events report only the attempt number, safe format category, output length and token limit—never raw output, conversation content, or credentials. This version uses prompt-level constraints because the current DSH provider-neutral request type does not expose a generic JSON Schema response option. Host-free parser tests run in CI; end-to-end model stream retry tests require the DSH peer runtime.
+Diagnostic events report only the phase, attempt number, safe format category, output length and token limit—never raw output, conversation content, or credentials. This version uses prompt-level constraints because the current DSH provider-neutral request type does not expose a generic JSON Schema response option. Host-free source, SQLite queue, migration, parser and settings-rebuild tests run in CI; model-stream and registry tests require the DSH peer runtime.
 
 ## Data and testing
 
 Candidate and publication state live in local DSH SQLite; published skills remain files in the chosen native skill root. Interrupted changes are checked and may require human review **only for conflicts or unusual recovery states**. No secret/session database belongs in the public repository.
 
-Run `npm test` for portable tests. Live model learning and DSH registry/UI behavior require separate integration testing. See [config.example.json](config.example.json) and [SECURITY.md](SECURITY.md).
+Run `npm test` for portable tests with Node 24; no DSH host or network calls are needed. Run `npm run test:host` in an environment that resolves the matching DSH SDK peers for the simulated model-stream and registry tests. Live provider and desktop behavior require separate integration testing. See [config.example.json](config.example.json) and [SECURITY.md](SECURITY.md).
 
 Related: [Dream & Memory](https://github.com/Kerberos255/dsh-memory-dreaming) · [Instruction Files](https://github.com/Kerberos255/dsh-instruction-files).
 

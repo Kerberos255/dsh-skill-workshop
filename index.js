@@ -5,6 +5,8 @@ import { Workshop } from './workshop.js';
 import { workspace,scopeId } from './workspace-io.js';
 import { learnSkill } from './learning.js';
 import { trustedSkillSource } from './learning-access.js';
+import { completedTasks } from './learning-sources.js';
+import { randomUUID } from 'node:crypto';
 
 const json=value=>JSON.parse(JSON.stringify(value));
 export function learningFailureCode(error){
@@ -36,6 +38,7 @@ export default class SkillWorkshop extends PluginConfig {
   ctx.on('agent/status',({agent,status})=>{const cwd=agent.session.header.cwd;if(!cwd)return;const review=this.learning.get(scopeId(cwd));if(status==='running'){if(review&&!review.maintenance)review.abort.abort();}else this.reviewIdle(agent);},{global:true});
   ctx.on('agent/inbox/inserted',({agent})=>{if(agent.session.header.cwd)this.learning.get(scopeId(agent.session.header.cwd))?.abort.abort();},{global:true});
   ctx.effect(()=>{const timer=setInterval(()=>{void this.housekeeping().catch(()=>{});},6*3600000);timer.unref?.();void this.housekeeping().catch(()=>{});return()=>clearInterval(timer);});
+  ctx.effect(()=>{const timer=setInterval(()=>this.drainLearning(),60000);timer.unref?.();return()=>clearInterval(timer);});
   ctx.effect(()=>async()=>{this.closed=true;this.abort.abort();await Promise.allSettled([...this.operations]);this.workshop.close();});
   for(const initialize of initializers)initialize.call(this);
   ctx.inject(['tools'],scope=>scope.tools.register({name:'skill_workshop',description:'列出、读取技能或提交修订提案；手工提案在设置页审阅。',
@@ -51,7 +54,7 @@ export default class SkillWorkshop extends PluginConfig {
  }
  ready(){if(this.closed||!this.configFile.value.enabled)throw new RemoteError('workshop/unavailable','技能工坊已停用',{});}
  async run(operation){this.ready();const signal=AbortSignal.any([this.abort.signal,this.configAbort.signal]);const task=(async()=>{try{const cwd=await workspace(this.context,this.configFile.value,signal);signal.throwIfAborted();return json(await operation(cwd,signal));}catch(error){if(error instanceof RemoteError)throw error;throw new RemoteError('workshop/operation-failed',error.message,{});}})();this.operations.add(task);try{return await task;}finally{this.operations.delete(task);}}
- catalog(){return this.run(async(cwd,signal)=>({...await this.workshop.list(cwd,undefined,signal),learning:{busy:this.learning.has(scopeId(cwd)),reviews:this.workshop.db.prepare('SELECT * FROM reviews WHERE scope=? ORDER BY created DESC LIMIT 10').all(scopeId(cwd)),candidates:this.workshop.db.prepare('SELECT COUNT(*) AS count FROM learning_candidates WHERE scope=?').get(scopeId(cwd)).count,candidateLimit:this.configFile.value.maxLearningCandidates,managedLimit:this.configFile.value.maxManagedSkills}}));}
+ catalog(){return this.run(async(cwd,signal)=>({...await this.workshop.list(cwd,undefined,signal),learning:{busy:this.learning.has(scopeId(cwd)),reviews:this.workshop.db.prepare('SELECT * FROM reviews WHERE scope=? ORDER BY created DESC LIMIT 10').all(scopeId(cwd)),candidates:this.workshop.db.prepare('SELECT COUNT(*) AS count FROM learning_candidates WHERE scope=?').get(scopeId(cwd)).count,candidateLimit:this.configFile.value.maxLearningCandidates,candidateIdleDays:this.configFile.value.candidateIdleDays,queuedTasks:this.workshop.learningStore.queuedCount(cwd),managedLimit:this.configFile.value.maxManagedSkills}}));}
  health({cwd,agentPreset}={}){
   if(this.closed)throw new Error('技能工坊已卸载');const config=this.configFile.value;
   // A workspace can learn across presets; trust still follows the channel owner.
@@ -66,7 +69,7 @@ export default class SkillWorkshop extends PluginConfig {
  applyProposal(id,confirmation){return this.run(cwd=>this.workshop.apply(cwd,id,confirmation));}
  rejectProposal(id){return this.run(cwd=>this.workshop.reject(cwd,id));}
  recheckPublications(){return this.run(cwd=>({recovery:this.workshop.publications.recover(cwd)}));}
- startLearning(sessionId){return this.run((cwd,signal)=>this.startReview(cwd,{sessionId,signal}));}
+ startLearning(sessionId){return this.run((cwd,signal)=>{this.workshop.learningStore.resetDraftFailures(cwd);this.workshop.learningStore.resetTaskFailures(cwd);return this.startReview(cwd,{sessionId,signal});});}
  cancelLearning(){return this.run(cwd=>{this.learning.get(scopeId(cwd))?.abort.abort();return {cancelled:true};});}
  async housekeeping(){
   if(this.closed||!this.configFile.value.enabled||this.sweeping)return;
@@ -82,15 +85,15 @@ export default class SkillWorkshop extends PluginConfig {
  }
  startReview(cwd,{sessionId,turn=0,signal,agent}={}){
   const scope=scopeId(cwd);if(this.learning.has(scope))throw new Error('此工作区正在生成技能提案');const abort=new AbortController(),combined=AbortSignal.any([abort.signal,this.abort.signal,this.configAbort.signal,...signal?[signal]:[]]);
-  const id=sessionId??'manual-'+Date.now();this.workshop.db.prepare("INSERT OR REPLACE INTO reviews VALUES(?,?,?,'running',?,NULL)").run(scope,id,turn,Date.now());
+  const id=(agent?'batch-':'manual-')+randomUUID();this.workshop.db.prepare("INSERT INTO reviews VALUES(?,?,?,'running',?,NULL)").run(scope,id,turn,Date.now());
   this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop','info','learning.started',{state:'running'});
   const entry={abort,maintenance:!!agent};this.learning.set(scope,entry);
   const learn=async signal=>{
    await this.workshop.sweep(cwd,signal);signal.throwIfAborted();
    const result=await learnSkill(this.context,this.workshop,cwd,this.configFile.value,{sessionId,signal,agent,onDiagnostic:detail=>{
     // Structured telemetry only: do not log prompts, model output, skill text or source IDs.
-    const {event,attempt,format,formatCode,outputChars,maxTokens}=detail;
-    this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop',event==='learning.json-invalid'?'warn':'info',event,{attempt,format,formatCode,outputChars,maxTokens});
+    const {event,attempt,phase,format,formatCode,outputChars,maxTokens}=detail;
+    this.context.get?.('pluginDiagnostics')?.record('dsh-skill-workshop',event==='learning.json-invalid'?'warn':'info',event,{attempt,phase,format,formatCode,outputChars,maxTokens});
    }});signal.throwIfAborted();
    if(result.proposal)result.publication=this.workshop.autoApply(cwd,result.proposal.id,signal);return result;
   };
@@ -108,15 +111,22 @@ export default class SkillWorkshop extends PluginConfig {
   return {started:true};
  }
  reviewIdle(agent){
-  const config=this.configFile.value,cwd=agent.session.header.cwd;if(this.closed||!config.enabled||!config.selfLearning||!cwd||!trustedSkillSource(this.context,agent.session.header)||agent.status!=='idle'||agent.inbox?.hasPending||this.learning.size)return;
+  const config=this.configFile.value,cwd=agent.session.header.cwd;if(this.closed||!config.enabled||!config.selfLearning||!cwd||!trustedSkillSource(this.context,agent.session.header)||agent.status!=='idle'||agent.inbox?.hasPending)return;
   if(!this.context.get('tools')?.get('skill_workshop',agent))return;
-  const end=agent.session.snapshotEvents().findLast(event=>event.type==='turn/end');if(!end||['aborted','error','blocked','max-tokens'].includes(end.data.reason?.kind))return;
-  const start=agent.session.snapshotEvents().findLast(event=>event.type==='turn/start'&&event.data.turn===end.data.turn&&event.seq<end.seq);
-  if(!start||end.seq-start.seq<config.minTurnEvents)return;
-  if(this.workshop.db.prepare('SELECT 1 FROM reviews WHERE scope=? AND session=? AND turn=?').get(scopeId(cwd),agent.session.id,end.data.turn))return;
+  const store=this.workshop.learningStore,events=agent.session.snapshotEvents(),end=events.findLast(event=>event.type==='turn/end');
+  const task=completedTasks(agent.session.header,events,{minTurnEvents:config.minTurnEvents,inheritedEventCount:agent.session.inheritedEventCount??0}).findLast(task=>task.endSeq===end?.seq);
+  // Enqueue before cooldown/daily/busy checks so a valuable completed task is
+  // retained even when this idle notification cannot start model work.
+  if(task&&!this.workshop.db.prepare('SELECT 1 FROM reviews WHERE scope=? AND session=? AND turn=?').get(scopeId(cwd),agent.session.id,task.turn))store.enqueue(cwd,task);
+  if(this.learning.size||!store.pending(cwd).length&&!store.ready(cwd).length)return;
+  if((this.context.get('agents')?.list()??[]).some(other=>other.session.header.cwd&&scopeId(other.session.header.cwd)===scopeId(cwd)&&(other.status!=='idle'||other.inbox?.hasPending)))return;
   const now=Date.now(),scope=scopeId(cwd),latest=this.workshop.db.prepare('SELECT MAX(created) AS stamp,COUNT(*) AS count FROM reviews WHERE scope=? AND created>=?').get(scope,now-86400000);
   if(latest.count>=config.maxReviewsPerDay||latest.stamp&&now-latest.stamp<config.learningCooldownMinutes*60000)return;
-  try{this.startReview(cwd,{sessionId:agent.session.id,turn:end.data.turn,agent});}catch{}
+  try{this.startReview(cwd,{sessionId:agent.session.id,turn:task?.turn??0,agent});}catch{}
+ }
+ drainLearning(){
+  if(this.closed||!this.configFile.value.enabled||!this.configFile.value.selfLearning||this.learning.size)return;
+  for(const agent of this.context.get('agents')?.list()??[]){this.reviewIdle(agent);if(this.learning.size)break;}
  }
 }
 const initializers=[];

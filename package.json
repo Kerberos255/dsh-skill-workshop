@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-workshop",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "license": "MIT",
   "description": "从日常工作自动提炼、发布和更新技能，按使用情况整理受管技能；也支持手工编辑与导入。",
@@ -62,7 +62,8 @@
     "dsh": ">=0.2.0-rc.2"
   },
   "scripts": {
-    "test": "node --test tests/zip.test.mjs tests/learning-access.test.mjs tests/skill-json-parser.test.mjs"
+    "test": "node --test tests/zip.test.mjs tests/learning-access.test.mjs tests/learning-policy.test.mjs tests/skill-json-parser.test.mjs tests/learning-sources.test.mjs tests/learning-queue.test.mjs tests/settings-build.test.mjs",
+    "test:host": "node --test tests/learning-workshop.test.mjs tests/model-completion.test.mjs tests/skill-json.test.mjs tests/learning-pipeline.test.mjs tests/learning-store.test.mjs"
   },
   "dshCompatibility": {
     "testedRuntime": "0.2.1-rc.2",

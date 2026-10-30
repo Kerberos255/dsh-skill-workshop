@@ -7,6 +7,7 @@ import { isUtf8 } from 'node:buffer';
 import { readZip } from './zip.js';
 import { PublicationJournal } from './publication.js';
 import { mergeObservations,publicationDecision } from './learning-policy.js';
+import { LearningStore,summaryFromSkill } from './learning-store.js';
 import { scopeOf } from '@deepseek-ai/dsh-scope';
 import { digest, readBounded, safePath, projectRoot, ownedDirectory, scopeId, absent } from './workspace-io.js';
 
@@ -54,23 +55,20 @@ export class Workshop {
    CREATE TABLE IF NOT EXISTS learning_candidates(scope TEXT NOT NULL,name TEXT NOT NULL,proposal_id TEXT NOT NULL,observations TEXT NOT NULL,updated INTEGER NOT NULL,PRIMARY KEY(scope,name));
    CREATE TABLE IF NOT EXISTS managed_workspaces(scope TEXT PRIMARY KEY,cwd TEXT NOT NULL);
    CREATE TABLE IF NOT EXISTS managed_skills(scope TEXT NOT NULL,name TEXT NOT NULL,path TEXT NOT NULL,revision TEXT NOT NULL,created INTEGER NOT NULL,last_used INTEGER NOT NULL,retired INTEGER,uses INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,name));`);
+  this.learningStore=new LearningStore(this.db,getConfig,scopeId,parseSkill);
   this.recoverManaged();
  }
- candidate(cwd,name){const row=this.db.prepare('SELECT * FROM learning_candidates WHERE scope=? AND name=?').get(scopeId(cwd),name);return row?{...row,observations:JSON.parse(row.observations)}:null;}
+ candidate(cwd,name){return this.learningStore.candidate(cwd,name);}
  canStageLearning(cwd,name){
   this.prune(cwd);
-  if(this.candidate(cwd,name))return true;
-  return this.db.prepare('SELECT COUNT(*) AS count FROM learning_candidates WHERE scope=?').get(scopeId(cwd)).count<this.getConfig().maxLearningCandidates;
+  return this.learningStore.canStage(cwd,name);
  }
  markLearning(cwd,id,sources,turnKeys=[]){
-  const proposal=this.proposal(cwd,id),scope=scopeId(cwd),previous=this.candidate(cwd,proposal.name);
-  if(!previous&&!this.canStageLearning(cwd,proposal.name))throw new Error('自动学习候选已达到安全上限');
-  const observations=mergeObservations(previous?.observations??[],turnKeys),now=Date.now();
-  this.db.prepare('INSERT INTO learned_proposals(id,scope,sources) VALUES(?,?,?)').run(id,scope,JSON.stringify(sources));
-  this.db.prepare('INSERT OR REPLACE INTO managed_workspaces VALUES(?,?)').run(scope,cwd);
-  this.db.prepare('INSERT INTO learning_candidates(scope,name,proposal_id,observations,updated) VALUES(?,?,?,?,?) ON CONFLICT(scope,name) DO UPDATE SET proposal_id=excluded.proposal_id,observations=excluded.observations,updated=excluded.updated').run(scope,proposal.name,id,JSON.stringify(observations),now);
-  if(previous&&previous.proposal_id!==id)this.db.prepare("UPDATE proposals SET state='rejected' WHERE id=? AND state='pending' AND id IN (SELECT id FROM learned_proposals)").run(previous.proposal_id);
-  return {observations:observations.length,ready:observations.length>=2};
+  const proposal=this.proposal(cwd,id),previous=this.candidate(cwd,proposal.name);
+  const staged=this.learningStore.stage(cwd,{candidateId:previous?.id,name:proposal.name,summary:summaryFromSkill(parseSkill(proposal.files['SKILL.md'])),sources,turnKeys,independentTask:true,sameProcedure:true});
+  if(!staged.staged&&staged.reason!=='duplicate-evidence')throw new Error('自动学习候选已达到安全上限');
+  const candidate=this.learningStore.attachDraft(cwd,staged.candidate?.id??previous.id,id);
+  return {observations:candidate.observations.length,ready:candidate.taskKeys.length>=2};
  }
  managed(cwd){return this.db.prepare('SELECT * FROM managed_skills WHERE scope=? ORDER BY last_used DESC').all(scopeId(cwd));}
  remember(proposal,cwd){
@@ -89,7 +87,7 @@ export class Workshop {
   if(!config.enabled||!origin)return {published:false,reason:'manual-review'};
   const candidate=this.candidate(cwd,proposal.name),owned=this.db.prepare('SELECT * FROM managed_skills WHERE scope=? AND name=?').get(scopeId(cwd),proposal.name);
   if(proposal.source&&(!owned||owned.path!==proposal.source||owned.revision!==proposal.baseRevision))return {published:false,reason:'user-owned'};
-  const decision=publicationDecision({observations:candidate?.observations??[],candidateId:candidate?.proposal_id,proposalId:id,
+  const decision=publicationDecision({observations:candidate?.taskKeys??[],candidateId:candidate?.proposal_id,proposalId:id,
    managedCount:this.db.prepare('SELECT COUNT(*) AS count FROM managed_skills WHERE scope=?').get(scopeId(cwd)).count,
    alreadyManaged:!!owned,maxManagedSkills:config.maxManagedSkills,autoPublish:config.autoPublish});
   if(!decision.published)return decision;
@@ -124,12 +122,10 @@ export class Workshop {
   const lease=await presets.acquireScope(this.getConfig().agentPreset);try{return await operation(lease.key);}finally{await lease[Symbol.asyncDispose]();}
  }
  async snapshot(cwd,scope,signal){return this.lookup(scope,scope=>this.ctx.skills.snapshot({cwd,scope,signal}));}
- async list(cwd,scope,signal){this.prune(cwd);const catalog=await this.snapshot(cwd,scope,signal);return {...catalog,workspace:cwd,targetRoot:this.root(cwd),recovery:this.publications.rows(cwd),managed:this.managed(cwd),proposals:this.proposals(cwd).map(({files,before,...proposal})=>({...proposal,files:Object.keys(files)})),skills:catalog.skills.map(item=>({...item,editable:!!item.path&&this.editable(cwd,item.path)}))};}
+ async list(cwd,scope,signal){this.prune(cwd);const catalog=await this.snapshot(cwd,scope,signal),candidates=this.learningStore.publicList(cwd),candidateProposals=new Set(this.learningStore.list(cwd).filter(row=>row.taskKeys.length<2).map(row=>row.proposal_id));return {...catalog,workspace:cwd,targetRoot:this.root(cwd),recovery:this.publications.rows(cwd),managed:this.managed(cwd),learningCandidates:candidates,proposals:this.proposals(cwd).map(({files,before,...proposal})=>({...proposal,learningCandidate:candidateProposals.has(proposal.id),files:Object.keys(files)})),skills:catalog.skills.map(item=>({...item,editable:!!item.path&&this.editable(cwd,item.path)}))};}
  prune(cwd){
   const config=this.getConfig(),scope=scopeId(cwd),eligible="scope=? AND state IN ('applied','rejected') AND id NOT IN (SELECT id FROM publications)";
-  const expiry=Date.now()-45*86400000;
-  this.db.prepare("UPDATE proposals SET state='rejected' WHERE state='pending' AND id IN (SELECT proposal_id FROM learning_candidates WHERE scope=? AND updated<?)").run(scope,expiry);
-  this.db.prepare('DELETE FROM learning_candidates WHERE scope=? AND updated<?').run(scope,expiry);
+  this.learningStore.prune(cwd);
   // Bound only auto-learned history regardless of legacy manual-history settings.
   this.db.prepare("DELETE FROM proposals WHERE "+eligible+" AND id IN (SELECT id FROM learned_proposals) AND created<?").run(scope,Date.now()-180*86400000);
   if(config.historyDays>0)this.db.prepare('DELETE FROM proposals WHERE '+eligible+' AND created<?').run(scope,Date.now()-config.historyDays*86400000);
@@ -146,10 +142,10 @@ export class Workshop {
  }
  proposals(cwd){return this.db.prepare('SELECT * FROM proposals WHERE scope=? ORDER BY created DESC LIMIT ?').all(scopeId(cwd),this.getConfig().maxProposals).map(row=>({id:row.id,created:row.created,state:row.state,...JSON.parse(row.payload)}));}
  proposal(cwd,id){const row=this.db.prepare('SELECT * FROM proposals WHERE id=? AND scope=?').get(id,scopeId(cwd));if(!row)throw new Error('提案不存在或属于其他工作区');return {id:row.id,created:row.created,state:row.state,...JSON.parse(row.payload)};}
- async propose(cwd,request,scope,signal){
+ async propose(cwd,request,scope,signal,automatic=false){
   this.prune(cwd);
   signal?.throwIfAborted();const config=this.getConfig();if(!config.enabled)throw new Error('技能工坊已停用');
-  if(this.db.prepare("SELECT COUNT(*) AS count FROM proposals WHERE scope=? AND state='pending'").get(scopeId(cwd)).count>=config.maxProposals)throw new Error('待审提案数量已达上限，请先处理已有提案');
+  if(!automatic&&this.db.prepare("SELECT COUNT(*) AS count FROM proposals WHERE scope=? AND state='pending' AND id NOT IN (SELECT id FROM learned_proposals)").get(scopeId(cwd)).count>=config.maxProposals)throw new Error('待审提案数量已达上限，请先处理已有提案');
   const action=request.action??'save';if(!['save','rename','duplicate','disable','enable','delete'].includes(action))throw new Error('无效工坊操作');
   const current=request.name?await this.read(cwd,request.name,scope,signal):null;
   signal?.throwIfAborted();
@@ -184,8 +180,8 @@ export class Workshop {
   if(!this.editable(cwd,path.join(proposal.root,proposal.target,'SKILL.md')))throw new Error('目标已不属于可编辑技能目录');
   if(original){const current=proposal.flat?{'SKILL.md':readBounded(original,config.maxSkillBytes)}:readBundle(path.dirname(original),config);if(bundleHash(current)!==proposal.baseRevision)throw new Error('技能已在外部修改，提案未发布');}
   if(!original||['rename','duplicate'].includes(proposal.action)){if(fs.existsSync(destination))throw new Error('目标名称已存在，提案未发布');}
-  this.publications.apply(cwd,proposal,{maxSkillBytes:config.maxSkillBytes,maxBundleBytes:config.maxBundleBytes,maxBundleFiles:config.maxBundleFiles});return this.proposal(cwd,id);
+  this.publications.apply(cwd,proposal,{maxSkillBytes:config.maxSkillBytes,maxBundleBytes:config.maxBundleBytes,maxBundleFiles:config.maxBundleFiles});this.learningStore.release(cwd,id);return this.proposal(cwd,id);
  }
- reject(cwd,id){const proposal=this.proposal(cwd,id);if(proposal.state!=='pending')throw new Error('此提案已经处理');this.db.prepare("UPDATE proposals SET state='rejected' WHERE id=?").run(id);return this.proposal(cwd,id);}
+ reject(cwd,id){const proposal=this.proposal(cwd,id);if(proposal.state!=='pending')throw new Error('此提案已经处理');this.db.prepare("UPDATE proposals SET state='rejected' WHERE id=?").run(id);this.learningStore.prune(cwd);return this.proposal(cwd,id);}
  close(){this.publications.close();this.db.close();}
 }

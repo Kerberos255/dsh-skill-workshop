@@ -10,4 +10,6 @@ The included client code is already generated, so standard installation needs no
 Replace <DSH_ROOT> in legacy documentation examples with your DSH install path.
 Upstream third-party dependencies retain their own licenses.
 
-UI generation: node tools/settings/build.mjs (full rebuild requires matching DSH host packages).
+UI generation: node tools/settings/build.mjs. Rebuilding the client preserves declared peer ranges and public package metadata. The example configuration is regenerated when matching DSH SDK peers are available; otherwise the checked-in example is retained.
+
+Run npm test with Node 24 for host-free source, SQLite learning queues, migration, parser and settings-rebuild regressions. Run npm run test:host only in an environment that resolves matching DSH SDK peers. Neither suite uses live provider credentials or real conversation data.

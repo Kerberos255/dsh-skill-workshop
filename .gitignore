@@ -22,3 +22,4 @@ desktop-user-data/
 packages/
 pnpm-lock.yaml
 .DS_Store
+.dsh/
