@@ -1,36 +1,36 @@
-# Skill Workshop for DeepSeek Harness
+# DSH 技能工坊（Skill Workshop）
 
-[简体中文](README.zh-CN.md) · [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) · [Security](SECURITY.md)
+[English](README.en.md) · [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) · [安全说明](SECURITY.md)
 
-Manage native DSH `SKILL.md` skills and **learn reusable procedures from completed tasks**.
+管理 DSH 原生 `SKILL.md` 技能，并从真实完成的任务中**自动学习和沉淀可复用流程**。
 
-## Features
+## 主要功能
 
-- Create, edit, import and organize project or user skills from the plugin settings.
-- **Automatic learning and publishing are enabled by default.** The same method needs evidence from at least **two independent, completed and source-verifiable tasks** before a skill can be published.
-- Reinforce matching candidates with new evidence; reject failed, duplicate or non-reusable tasks. Malformed model JSON receives bounded recovery.
-- Protect manually edited and externally managed skills. Interrupted publication is reconciled against existing files.
-- Bound candidates and managed skills, expire stale candidates and retire unused workshop-owned skills to prevent unbounded growth.
+- 在设置页创建、编辑、导入和管理项目级或用户级技能。
+- 默认开启自动学习与自动发布：同一种方法至少有**两个独立、已完成且来源可验证的任务**作为证据，才会生成并发布技能。
+- 自动合并同类候选的有效证据，过滤失败、重复及不具备复用价值的任务；模型输出格式异常时有限重试。
+- 不自动覆盖人工修改或外部维护的技能；发布中断后核对现有文件再恢复。
+- 限制候选及受管技能数量，定期整理过期候选和长期未使用的受管技能，避免无限增长。
 
-## Install and use
+## 安装与使用
 
 ```sh
 dsh plugin --profile desktop add github:Kerberos255/dsh-skill-workshop
 ```
 
-Replace `desktop` with your profile, then restart DSH.
+将 `desktop` 换成实际 Profile，安装后重启 DSH。
 
-1. Open **Settings → Plugins → Skill Workshop** and select the project `.dsh/skills` directory or your user skill directory.
-2. Review the learning, auto-publishing and capacity settings (learning and publishing are on by default).
-3. Continue normal tasks. The first eligible task creates an **experience candidate**; a later independent task can provide the evidence needed for publication.
-4. Review candidates and managed skills in settings, or create/import skills manually.
+1. 打开 **设置 → 插件 → 技能工坊**，选择项目目录 `.dsh/skills` 或用户技能目录。
+2. 检查自动学习、自动发布和容量设置；默认两项均已开启。
+3. 正常使用 DSH 完成任务。首个合格实例只形成**经验候选**，后续独立任务补足证据后才可能自动发布。
+4. 在设置页检查候选和受管技能，也可手动创建、导入或处理冲突。
 
-Default limits per workspace: **64 candidates**, **64 workshop-managed skills**, a **60-minute** learning cooldown and up to **8** automatic attempts per day. Relevant limits are configurable.
+默认每工作区最多保留 **64 个学习候选**及 **64 个工坊受管技能**；学习冷却为 **60 分钟**，每日最多尝试 **8 次**。上限可在设置中调整。
 
-## Safety and tests
+## 边界与测试
 
-- Two independent tasks establish a **source-evidence threshold**, not proof that the resulting procedure has been rerun or externally verified.
-- Automatic cleanup does not overwrite or remove manual/external skills; ambiguous recovery conflicts require review.
-- State lives in local SQLite; published skills remain native files. Automatic learning requires an available model and DSH host services.
+- 两次独立任务属于**来源证据门槛**，并不保证生成的技能已经在真实环境重新执行或通过外部验收。
+- 自动整理只管理工坊拥有的对象；人工维护、外部技能及异常冲突不会被强行清理或覆盖。
+- 状态保存在本地 SQLite，技能发布到所选原生技能目录。自动学习依赖可用模型和 DSH 原生服务。
 
-Portable tests: `npm test`; host integration: `npm run test:host`. See [config.example.json](config.example.json) and [LICENSE](LICENSE).
+便携测试：`npm test`；宿主环境集成测试：`npm run test:host`。配置见 [config.example.json](config.example.json)，许可见 [LICENSE](LICENSE)。
