@@ -63,7 +63,7 @@
   },
   "scripts": {
     "test": "node --test tests/zip.test.mjs tests/learning-access.test.mjs tests/learning-policy.test.mjs tests/skill-json-parser.test.mjs tests/learning-sources.test.mjs tests/learning-queue.test.mjs tests/settings-build.test.mjs",
-    "test:host": "node --test tests/learning-workshop.test.mjs tests/model-completion.test.mjs tests/skill-json.test.mjs tests/learning-pipeline.test.mjs tests/learning-store.test.mjs"
+    "test:host": "node --test tests/learning-workshop.test.mjs tests/model-completion.test.mjs tests/skill-json.test.mjs tests/learning-pipeline.test.mjs tests/learning-store.test.mjs tests/learning-session-lookup.test.mjs"
   },
   "dshCompatibility": {
     "testedRuntime": "0.2.1-rc.2",

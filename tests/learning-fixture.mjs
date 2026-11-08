@@ -20,7 +20,7 @@ export function fixture(options={}){
  const ctx={get(){return undefined;},emit(){},dshHomePath:(...parts)=>path.join(home,...parts),
   skills:{async get(name){const filename=path.join(cwd,'.dsh/skills',name,'SKILL.md');if(!fs.existsSync(filename))return null;const parsed=parseSkill(fs.readFileSync(filename,'utf8'));return {...parsed,path:filename,content:parsed.body};},
    async snapshot(){const base=path.join(cwd,'.dsh/skills');return {complete:true,skills:fs.existsSync(base)?(await Promise.all(fs.readdirSync(base).map(name=>ctx.skills.get(name)))).filter(Boolean):[]};}},
-  sessionQuery:{async listSessions(){return [{header}];},async observeSession(){return {events,inheritedEventCount:0,[Symbol.dispose](){}};}},
+  sessionQuery:{async listSessions(){return [{header}];},async observeSession(){return {header,events,inheritedEventCount:0,[Symbol.dispose](){}};}},
   agentDefaultModel:{currentSelection(){return {provider:'opencode-go',model:'fixture-model'};}},tokenMeter:{estimateMessage:options.estimateMessage??(()=>25)},
   llm:{async resolveModelInfo(){return {context:{contextWindow:40000},defaultMaxTokens:4096};},async *stream(request){requests.push(request);const output=await responder(request,requests.length);request.signal?.throwIfAborted();yield {type:'text-delta',index:0,text:typeof output==='string'?output:output.raw??JSON.stringify(output.value??output)};if(output.finish!==false)yield {type:'finish',reason:{kind:output.finish??'stop'}};}}
  };

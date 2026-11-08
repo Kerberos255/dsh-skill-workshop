@@ -48,19 +48,38 @@ async function generateJson(ctx,target,info,sessionId,system,data,config,{signal
  }
 }
 
-async function sourceTasks(ctx,workshop,cwd,config,{sessionId,signal,agent}){
- const store=workshop.learningStore,records=await ctx.sessionQuery.listSessions(signal),pending=store.pending(cwd),tasks=[];
+export async function sourceTasks(ctx,workshop,cwd,config,{sessionId,signal,agent}){
+ const store=workshop.learningStore,pending=store.pending(cwd),tasks=[];
  const wanted=new Set(pending.map(row=>row.session)),automatic=!!agent,visited=new Set();
+ // Automatic learning uses an already bounded durable queue. Avoid enumerating
+ // the entire history of sessions every time background learning runs.
+ const records=automatic?[...wanted].map(id=>({header:{id}})):await ctx.sessionQuery.listSessions(signal);
+ const scope=scopeId(cwd),workspaceCache=new Map();
+ const matchesWorkspace=directory=>{
+  if(workspaceCache.has(directory))return workspaceCache.get(directory);
+  let matched=false;
+  try{matched=scopeId(fs.realpathSync(directory))===scope;}catch{}
+  workspaceCache.set(directory,matched);return matched;
+ };
  for(const record of records){
-  const header=record.header;
-  if(!header)continue;
-  if(!trustedSkillSource(ctx,header)||header.id.startsWith('session-dsh-memory-')){if(wanted.has(header.id))visited.add(header.id);continue;}
+  let header=record.header;
+  if(!header?.id)continue;
   if(automatic&&!wanted.has(header.id)||!automatic&&sessionId&&header.id!==sessionId)continue;
   if(!automatic&&!sessionId&&pending.length&&!wanted.has(header.id))continue;
-  let current;try{current=fs.realpathSync(header.cwd);}catch{continue;}
-  if(scopeId(current)!==scopeId(cwd))continue;
+  if(!automatic){
+   if(!trustedSkillSource(ctx,header)||header.id.startsWith('session-dsh-memory-')){if(wanted.has(header.id))visited.add(header.id);continue;}
+   if(!matchesWorkspace(header.cwd))continue;
+  }
   let observation;try{observation=await ctx.sessionQuery.observeSession(header.id,{signal});}catch(error){if(signal?.aborted)throw error;store.fail(cwd,pending.filter(row=>row.session===header.id));continue;}
   try{
+   if(automatic){
+    // Queued IDs are not an authorization grant: verify the observed session.
+    const observed=observation.header;
+    if(!observed||observed.id!==header.id||!trustedSkillSource(ctx,observed)||observed.id.startsWith('session-dsh-memory-')||!matchesWorkspace(observed.cwd)){
+     visited.add(header.id);continue;
+    }
+    header=observed;
+   }
    visited.add(header.id);
    const all=completedTasks(header,observation.events,{minTurnEvents:config.minTurnEvents,inheritedEventCount:observation.inheritedEventCount??0});
    const completed=automatic?all:all.slice(-16);
